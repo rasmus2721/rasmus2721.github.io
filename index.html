@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OMXC25 | Konfidensintervalberegner</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;color:#172b35;background:#f4f7fa}
+    *{box-sizing:border-box}body{margin:0;padding:30px 16px}main{max-width:880px;margin:auto}
+    h1{margin:0;font-size:clamp(1.6rem,4vw,2.2rem)}h2{font-size:1.13rem;margin:0 0 16px}
+    p{line-height:1.55}.subtle{color:#546672;font-size:.9rem}.card{background:#fff;border:1px solid #e1e8ed;border-radius:16px;padding:22px;margin:17px 0;box-shadow:0 3px 12px #1b394407}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    button,select,input[type=date]{font:inherit;padding:10px 12px;border:1px solid #c8d5dc;border-radius:9px;background:white;color:#172b35;max-width:100%}
+    button{cursor:pointer}button.active,.primary{background:#087c74;color:white;border-color:#087c74}button:hover{border-color:#087c74}
+    .upload{display:block;text-align:center;border:2px dashed #a9c4ca;border-radius:12px;padding:26px 12px;cursor:pointer;background:#f9fcfd}
+    .upload:hover{border-color:#087c74}.upload input{position:absolute;opacity:0;width:1px;height:1px}
+    label.field{display:flex;flex-direction:column;gap:6px;font-size:.9rem}label.field select,label.field input{width:100%}
+    .metric{background:#f2f7f7;padding:14px;border-radius:10px}.metric span{font-size:.82rem;color:#546672}.metric strong{display:block;font-size:1.45rem;margin-top:4px;overflow-wrap:anywhere}
+    .highlight{font-size:clamp(1.35rem,4vw,2rem);font-weight:750;color:#076d66;overflow-wrap:anywhere}
+    .note{font-size:.85rem;color:#526670}.error{color:#a22c25}svg{width:100%;height:auto;display:block}table{width:100%;border-collapse:collapse;font-size:.86rem}th,td{text-align:left;padding:8px;border-bottom:1px solid #e3eaed}details summary{cursor:pointer;font-weight:650}
+    .hidden{display:none!important}.pill{font-size:.8rem;background:#def4ef;color:#08665e;border-radius:40px;padding:6px 10px}
+    @media(max-width:560px){.cols{grid-template-columns:1fr}.card{padding:17px}}
+  </style>
+</head>
+<body>
+<main>
+  <header><div class="row" style="justify-content:space-between"><h1>OMXC25 – Konfidensinterval</h1><span class="pill">Statistikprojekt</span></div><p class="subtle">Data → Beregning → Resultat → Fortolkning</p></header>
+  <section class="card">
+    <h2>1. Indlæs data</h2>
+    <label class="upload" for="file">📂<br><strong>Vælg en CSV-fil</strong><br><span class="subtle">Fra Excel: Gem som CSV UTF-8. Kolonner med dato og lukkekurs.</span><input id="file" type="file" accept=".csv,.txt,text/csv"></label>
+    <div class="row" style="margin-top:12px"><button id="demo" type="button">Prøv eksempeldata</button><span id="status" class="subtle" role="status">Ingen fil indlæst</span></div>
+    <div class="cols hidden" id="mapping" style="margin-top:18px"><label class="field">Datokolonne<select id="dateCol"></select></label><label class="field">Lukkekurskolonne<select id="priceCol"></select></label></div>
+    <div id="preview" class="hidden" style="overflow-x:auto;margin-top:15px"><p class="subtle">Eksempel på indlæste rækker:</p><table><thead><tr><th>Dato</th><th>Lukkekurs</th></tr></thead><tbody id="previewRows"></tbody></table></div>
+  </section>
+  <section class="card">
+    <h2>2. Vælg periode og konfidensniveau</h2>
+    <div class="row" id="periodButtons"><button data-period="year" class="active" type="button">Årets start til nu</button><button data-period="all" type="button">Alle observationer</button><button data-period="custom" type="button">Valgfri periode</button></div>
+    <div id="customDates" class="cols hidden" style="margin-top:14px"><label class="field">Fra dato<input type="date" id="from"></label><label class="field">Til dato<input type="date" id="to"></label></div>
+    <p id="periodInfo" class="subtle"></p>
+    <div class="row" id="confidenceButtons"><span>Konfidensniveau:</span><button data-confidence="90" type="button">90 %</button><button data-confidence="95" class="active" type="button">95 %</button><button data-confidence="99" type="button">99 %</button></div>
+  </section>
+  <section class="card"><h2>3. Beregning og resultater</h2><div id="results" class="subtle">Upload en CSV-fil, eller vælg eksempeldata for at begynde.</div></section>
+  <section id="interpretCard" class="card hidden"><h2>4. Fortolkning</h2><p id="interpret"></p></section>
+  <section class="card"><details><summary>Vis beregninger og formler</summary><div id="math" style="margin-top:15px"><p>Gennemsnit: x̄ = Σx / n</p><p>Standardfejl: SE = s / √n</p><p>Konfidensinterval: x̄ ± t* × SE</p></div></details></section>
+  <p class="note"><strong>Vigtigt:</strong> Daglige lukkekurser er tidsmæssigt afhængige. Et almindeligt t-konfidensinterval for deres gennemsnit opfylder derfor typisk ikke antagelsen om uafhængige observationer. Værktøjet er tænkt som en undervisningsmodel, ikke som et estimat for fremtidige kurser.</p>
+  <p class="note">Filer behandles lokalt i din browser og uploades ikke til en server.</p>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const D = (n, digits=2) => Number(n).toLocaleString('da-DK',{minimumFractionDigits:digits, maximumFractionDigits:digits});
+const today = new Date().toLocaleDateString('en-CA', {timeZone:'Europe/Copenhagen'}); // ISO YYYY-MM-DD in supported browsers
+const currentDate = /^\d{4}-\d{2}-\d{2}$/.test(today) ? today : new Date().toISOString().slice(0,10);
+let headings=[],raw=[],observations=[],dateCol=0,priceCol=1,period='year',confidence=95;
+$('from').value=currentDate.slice(0,4)+'-01-01';$('to').value=currentDate;
+
+function csvRows(source){
+  let s=source.replace(/^\uFEFF/,'');
+  const first=s.split(/\r?\n/,1)[0];
+  const candidates=[';',',','\t'];
+  const delimiter=candidates.map(ch=>({ch,n:(first.match(new RegExp(ch==='\t'?'\\t':ch===';'?';':',','g'))||[]).length})).sort((a,b)=>b.n-a.n)[0].ch;
+  let out=[],row=[],value='',quoted=false;
+  for(let i=0;i<s.length;i++){
+    let ch=s[i];
+    if(ch==='"'){if(quoted&&s[i+1]==='"'){value+='"';i++;}else quoted=!quoted;}
+    else if(ch===delimiter&&!quoted){row.push(value.trim());value='';}
+    else if((ch==='\n'||ch==='\r')&&!quoted){if(ch==='\r'&&s[i+1]==='\n')i++;row.push(value.trim());if(row.some(v=>v!==''))out.push(row);row=[];value='';}
+    else value+=ch;
+  }
+  row.push(value.trim());if(row.some(v=>v!==''))out.push(row);
+  return out;
+}
+function numeric(value){
+ let s=String(value??'').trim().replace(/\s/g,'').replace(/[^\d.,+\-]/g,'');
+ if(!s)return NaN;
+ const comma=s.lastIndexOf(','),dot=s.lastIndexOf('.');
+ if(comma>=0&&dot>=0)s=comma>dot?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');
+ else if(comma>=0)s=s.replace(',','.');
+ else if((s.match(/\./g)||[]).length>1)s=s.replace(/\./g,'');
+ return Number(s);
+}
+function iso(y,m,d){let x=new Date(Date.UTC(y,m-1,d));return x.getUTCFullYear()===y&&x.getUTCMonth()===m-1&&x.getUTCDate()===d?x.toISOString().slice(0,10):null;}
+function readDate(value){
+ let s=String(value??'').trim(),m;
+ if((m=s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)))return iso(+m[1],+m[2],+m[3]);
+ if((m=s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/)))return iso(+m[3],+m[2],+m[1]);
+ if(/^\d{5}(?:\.\d+)?$/.test(s)){let x=new Date(Date.UTC(1899,11,30)+Math.floor(Number(s))*86400000);return x.toISOString().slice(0,10);}
+ return null;
+}
+function ingest(text){
+ let a=csvRows(text);if(a.length<2||a[0].length<2)throw Error('CSV-filen skal indeholde mindst to kolonner og flere rækker.');
+ const hasHeader=a[0].some(v=>/dato|date|close|lukkekurs|kurs|price|tid/i.test(v)) || a[0].filter(v=>readDate(v)||Number.isFinite(numeric(v))).length<a[0].length;
+ headings=hasHeader?a.shift():a[0].map((_,i)=>'Kolonne '+(i+1));raw=a;
+ dateCol=Math.max(0,headings.findIndex(v=>/dato|date|time|tid/i.test(v)));
+ priceCol=headings.findIndex(v=>/lukkekurs|close|kurs|price|last/i.test(v));
+ if(priceCol<0)priceCol=headings.findIndex((_,i)=>i!==dateCol&&raw.slice(0,20).some(row=>Number.isFinite(numeric(row[i]))));
+ if(priceCol<0||priceCol===dateCol)priceCol=dateCol===0?1:0;
+ [['dateCol',dateCol],['priceCol',priceCol]].forEach(([id,v])=>{const s=$(id);s.replaceChildren();headings.forEach((h,i)=>s.add(new Option(h||'Kolonne '+(i+1),i)));s.value=v;});
+ $('mapping').classList.remove('hidden');$('preview').classList.remove('hidden');rebuild();
+}
+function rebuild(){
+ observations=raw.map(row=>({date:readDate(row[dateCol]),value:numeric(row[priceCol])})).filter(x=>x.date!==null&&Number.isFinite(x.value)).sort((a,b)=>a.date.localeCompare(b.date));
+ $('status').textContent=`${D(raw.length,0)} rækker læst · ${D(observations.length,0)} gyldige · ${D(raw.length-observations.length,0)} udeladt`;
+ const tb=$('previewRows');tb.replaceChildren();observations.slice(0,5).forEach(r=>{let tr=document.createElement('tr');[r.date,D(r.value)].forEach(x=>{let td=document.createElement('td');td.textContent=x;tr.append(td);});tb.append(tr);});
+ calculate();
+}
+// Lanczos approximation of ln(Gamma), used for the regularized incomplete beta.
+function logGamma(z){
+ const p=[.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,-176.6150291621406,12.507343278686905,-.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];
+ if(z<.5)return Math.log(Math.PI)-Math.log(Math.sin(Math.PI*z))-logGamma(1-z);
+ z-=1;let x=p[0];for(let i=1;i<p.length;i++)x+=p[i]/(z+i);
+ const t=z+7.5;return .5*Math.log(2*Math.PI)+(z+.5)*Math.log(t)-t+Math.log(x);
+}
+function betaCF(a,b,x){
+ const tiny=1e-300;let qab=a+b,qap=a+1,qam=a-1,c=1,d=1-qab*x/qap;
+ if(Math.abs(d)<tiny)d=tiny;d=1/d;let h=d;
+ for(let m=1;m<=250;m++){
+   let m2=2*m,aa=m*(b-m)*x/((qam+m2)*(a+m2));
+   d=1+aa*d;if(Math.abs(d)<tiny)d=tiny;c=1+aa/c;if(Math.abs(c)<tiny)c=tiny;d=1/d;h*=d*c;
+   aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2));
+   d=1+aa*d;if(Math.abs(d)<tiny)d=tiny;c=1+aa/c;if(Math.abs(c)<tiny)c=tiny;d=1/d;let delta=d*c;h*=delta;if(Math.abs(delta-1)<2e-13)break;
+ }
+ return h;
+}
+function betaI(x,a,b){
+ if(x<=0)return 0;if(x>=1)return 1;
+ const front=Math.exp(logGamma(a+b)-logGamma(a)-logGamma(b)+a*Math.log(x)+b*Math.log1p(-x));
+ return x<(a+1)/(a+b+2)?front*betaCF(a,b,x)/a:1-front*betaCF(b,a,1-x)/b;
+}
+function studentCDF(t,v){if(t===0)return .5;let x=v/(v+t*t),a=betaI(x,v/2,.5)/2;return t>0?1-a:a;}
+function tCritical(v,level){let target=(1+level/100)/2,lo=0,hi=1;while(studentCDF(hi,v)<target&&hi<1e8)hi*=2;for(let i=0;i<80;i++){let mid=(lo+hi)/2;if(studentCDF(mid,v)<target)lo=mid;else hi=mid;}return (lo+hi)/2;}
+function safeSvg(values,avg){
+ const w=760,h=220,pad=44;
+ let min=Math.min(...values),max=Math.max(...values),rng=max-min||1;
+ let coords=values.map((v,i)=>[(pad+i*(w-2*pad)/Math.max(1,values.length-1)),(h-pad-(v-min)/rng*(h-2*pad))]);
+ let step=Math.max(1,Math.ceil(coords.length/750));let points=coords.filter((_,i)=>i%step===0||i===coords.length-1).map(p=>p.map(x=>x.toFixed(2)).join(',')).join(' ');
+ const meanY=h-pad-(avg-min)/rng*(h-2*pad);
+ return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Udvikling i lukkekurser i valgte observationsperiode"><line x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}" stroke="#8b9da6"/><line x1="${pad}" y1="${meanY}" x2="${w-pad}" y2="${meanY}" stroke="#de9a27" stroke-width="2" stroke-dasharray="7 5"/><polyline points="${points}" fill="none" stroke="#087c74" stroke-width="2.5"/><g fill="#536772" font-size="14"><text x="${pad}" y="18">${D(max)}</text><text x="${pad}" y="${h-18}">${D(min)}</text></g></svg>`;
+}
+function calculate(){
+ if(!raw.length)return;
+ const from=period==='all'?'0000-01-01':period==='year'?currentDate.slice(0,4)+'-01-01':$('from').value;
+ const to=period==='all'?'9999-12-31':period==='year'?currentDate:$('to').value;
+ $('periodInfo').textContent=period==='all'?'Hele datasættet':`Valgt periode: ${from||'—'} til ${to||'—'}`;
+ const target=$('results');
+ if(!from||!to||from>to){target.innerHTML='<p class="error">Vælg en gyldig start- og slutdato.</p>';$('interpretCard').classList.add('hidden');return;}
+ const selected=observations.filter(r=>r.date>=from&&r.date<=to),n=selected.length;
+ if(n<3){target.textContent=`Kun ${n} gyldige observationer i perioden. Vælg en periode med mindst 3 observationer.`;$('interpretCard').classList.add('hidden');return;}
+ const values=selected.map(r=>r.value),mean=values.reduce((s,x)=>s+x,0)/n;
+ const sd=Math.sqrt(values.reduce((s,x)=>s+(x-mean)**2,0)/(n-1));
+ const se=sd/Math.sqrt(n),tc=tCritical(n-1,confidence),margin=tc*se,low=mean-margin,high=mean+margin;
+ const band=Math.max(margin*1.5,.001),scale=x=>40+(x-(mean-band))/(2*band)*680;
+ target.innerHTML=`<div class="cols"><div class="metric"><span>Gennemsnit</span><strong>${D(mean)}</strong>indekspoint</div><div class="metric"><span>Antal observationer</span><strong>${D(n,0)}</strong>gyldige handelsdage</div><div class="metric"><span>Standardafvigelse</span><strong>${D(sd)}</strong></div><div class="metric"><span>Standardfejl</span><strong>${D(se,4)}</strong></div></div><p style="margin:22px 0 4px;font-weight:650">${confidence} % konfidensinterval</p><div class="highlight">${D(low)} – ${D(high)}</div><svg viewBox="0 0 760 106" role="img" aria-label="Konfidensinterval"><line x1="40" x2="720" y1="37" y2="37" stroke="#d9e4e5" stroke-width="12" stroke-linecap="round"/><line x1="${scale(low)}" x2="${scale(high)}" y1="37" y2="37" stroke="#0e9385" stroke-width="12" stroke-linecap="round"/><circle cx="380" cy="37" r="10" fill="#076b63" stroke="white" stroke-width="3"/><g fill="#334a55" font-size="16" text-anchor="middle"><text x="${scale(low)}" y="75">${D(low)}</text><text x="${scale(high)}" y="75">${D(high)}</text><text x="380" y="101">Gennemsnit</text></g></svg><p class="subtle">Fejlmargin: ± ${D(margin)} indekspoint</p><h3>Udvikling i lukkekurser</h3>${safeSvg(values,mean)}<p class="subtle">Grøn: lukkekurser · orange stiplet: gennemsnit</p>`;
+ $('interpretCard').classList.remove('hidden');
+ $('interpret').textContent=`I den valgte periode (${selected[0].date} til ${selected[n-1].date}) er gennemsnittet af ${D(n,0)} lukkekurser ${D(mean)} indekspoint. Et beregnet ${confidence} % t-konfidensinterval er ${D(low)} til ${D(high)}. Hvis stikprøverne opfyldte modellens antagelser, ville cirka ${confidence} % af intervaller fra gentagne stikprøver indeholde den sande middelværdi. Da lukkekurser over tid ikke normalt er uafhængige, kan denne usikkerhed være misvisende.`;
+ $('math').innerHTML=`<p>Gennemsnit (x̄): <strong>${D(mean,4)}</strong></p><p>Stikprøvestandardafvigelse (s): <strong>${D(sd,4)}</strong></p><p>Antal observationer (n): <strong>${n}</strong></p><p>Standardfejl = s / √n = ${D(sd,4)} / √${n} = <strong>${D(se,4)}</strong></p><p>Kritisk t-værdi med ${n-1} frihedsgrader: <strong>${D(tc,5)}</strong></p><p>Fejlmargin = t* × SE = <strong>${D(margin,4)}</strong></p><p>Konfidensinterval = ${D(mean)} ± ${D(margin)} = <strong>[${D(low)}; ${D(high)}]</strong></p>`;
+}
+$('file').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{ingest(await f.text());}catch(err){$('status').textContent='Fejl: '+err.message;$('status').classList.add('error');}});
+$('demo').addEventListener('click',()=>{let a=['Dato;Lukkekurs'];let start=new Date(Date.UTC(2025,0,1));for(let i=0;i<650;i++){const dt=new Date(start.getTime()+i*86400000);if(dt.getUTCDay()===0||dt.getUTCDay()===6)continue;let close=1800+i*.16+35*Math.sin(i/25)+12*Math.cos(i/7);a.push(dt.toISOString().slice(0,10)+';'+close.toFixed(2).replace('.',','));}ingest(a.join('\n'));$('status').textContent='Syntetiske eksempeldata · '+$('status').textContent;});
+$('dateCol').addEventListener('change',e=>{dateCol=Number(e.target.value);rebuild();});
+$('priceCol').addEventListener('change',e=>{priceCol=Number(e.target.value);rebuild();});
+document.querySelectorAll('[data-period]').forEach(b=>b.addEventListener('click',()=>{period=b.dataset.period;document.querySelectorAll('[data-period]').forEach(x=>x.classList.toggle('active',x===b));$('customDates').classList.toggle('hidden',period!=='custom');calculate();}));
+document.querySelectorAll('[data-confidence]').forEach(b=>b.addEventListener('click',()=>{confidence=Number(b.dataset.confidence);document.querySelectorAll('[data-confidence]').forEach(x=>x.classList.toggle('active',x===b));calculate();}));
+['from','to'].forEach(id=>$(id).addEventListener('change',calculate));
+$('periodInfo').textContent=`Standardperiode: ${currentDate.slice(0,4)}-01-01 til ${currentDate}`;
+</script>
+</body>
+</html>
